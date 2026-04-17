@@ -2,11 +2,44 @@ import tkinter as tk
 from tkinter import ttk
 import threading
 import time
-import pyautogui
+import ctypes
+import ctypes.wintypes
 import keyboard
-import sys
 
-pyautogui.FAILSAFE = False
+# === METHODE LA PLUS RAPIDE : SendInput Windows direct (bypass pyautogui) ===
+MOUSEEVENTF_LEFTDOWN   = 0x0002
+MOUSEEVENTF_LEFTUP     = 0x0004
+MOUSEEVENTF_RIGHTDOWN  = 0x0008
+MOUSEEVENTF_RIGHTUP    = 0x0010
+MOUSEEVENTF_MIDDLEDOWN = 0x0020
+MOUSEEVENTF_MIDDLEUP   = 0x0040
+INPUT_MOUSE = 0
+
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = [("dx", ctypes.c_long), ("dy", ctypes.c_long),
+                ("mouseData", ctypes.wintypes.DWORD),
+                ("dwFlags", ctypes.wintypes.DWORD),
+                ("time", ctypes.wintypes.DWORD),
+                ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong))]
+
+class INPUT_UNION(ctypes.Union):
+    _fields_ = [("mi", MOUSEINPUT)]
+
+class INPUT(ctypes.Structure):
+    _fields_ = [("type", ctypes.wintypes.DWORD), ("union", INPUT_UNION)]
+
+def _send_click(down_flag, up_flag):
+    inputs = (INPUT * 2)(
+        INPUT(type=INPUT_MOUSE, union=INPUT_UNION(mi=MOUSEINPUT(dwFlags=down_flag))),
+        INPUT(type=INPUT_MOUSE, union=INPUT_UNION(mi=MOUSEINPUT(dwFlags=up_flag))),
+    )
+    ctypes.windll.user32.SendInput(2, inputs, ctypes.sizeof(INPUT))
+
+CLICK_MAP = {
+    "Gauche":  (MOUSEEVENTF_LEFTDOWN,   MOUSEEVENTF_LEFTUP),
+    "Droit":   (MOUSEEVENTF_RIGHTDOWN,  MOUSEEVENTF_RIGHTUP),
+    "Milieu":  (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
+}
 
 class AutoClicker:
     def __init__(self, root):
@@ -53,15 +86,15 @@ class AutoClicker:
         canvas.create_text(210, 82, text="▪  ▪  ▪", font=("Segoe UI", 8),
                            fill="#2A2A3A", anchor="center")
 
-        self._section_label(canvas, 108, "INTERVALLE DE CLIC")
+        self._section_label(canvas, 108, "INTERVALLE DE CLIC  (0 = TURBO MAX)")
         frame_interval = tk.Frame(self.root, bg="#1A1A1F", bd=0)
         canvas.create_window(210, 152, window=frame_interval, width=360, height=56)
         self._draw_panel(canvas, 210, 152, 360, 56)
 
         self.hours_var = tk.StringVar(value="0")
-        self.mins_var = tk.StringVar(value="0")
-        self.secs_var = tk.StringVar(value="0")
-        self.ms_var = tk.StringVar(value="100")
+        self.mins_var  = tk.StringVar(value="0")
+        self.secs_var  = tk.StringVar(value="0")
+        self.ms_var    = tk.StringVar(value="0")
 
         time_frame = tk.Frame(frame_interval, bg="#1A1A1F")
         time_frame.pack(expand=True)
@@ -117,14 +150,13 @@ class AutoClicker:
                                           font=("Segoe UI", 11))
         self.repeat_combo.pack(expand=True, pady=9)
 
-        self.status_var = tk.StringVar(value="EN ATTENTE")
-        self.status_dot = canvas.create_oval(170, 464, 182, 476, fill="#2A2A3A", outline="")
-        self.status_text = canvas.create_text(210, 470, text="EN ATTENTE",
+        self.status_dot  = canvas.create_oval(170, 464, 182, 476, fill="#2A2A3A", outline="")
+        self.status_text = canvas.create_text(215, 470, text="EN ATTENTE",
                                                font=("Segoe UI", 9, "bold"),
                                                fill="#4A4A5A", anchor="center")
-        self.count_text = canvas.create_text(330, 470, text="0 clics",
-                                              font=("Consolas", 9),
-                                              fill="#2A2A3A", anchor="center")
+        self.count_text  = canvas.create_text(340, 470, text="0 clics",
+                                               font=("Consolas", 9),
+                                               fill="#2A2A3A", anchor="center")
         self.canvas = canvas
 
         self.start_btn = tk.Button(self.root, text="▶  DÉMARRER",
@@ -166,24 +198,20 @@ class AutoClicker:
     def _section_label(self, canvas, y, text):
         canvas.create_text(38, y, text=text, font=("Segoe UI", 7, "bold"),
                            fill="#3A3A4A", anchor="w")
-        canvas.create_line(130, y+4, 382, y+4, fill="#1A1A1F", width=0.5)
+        canvas.create_line(200, y+4, 382, y+4, fill="#1A1A1F", width=0.5)
 
     def _bind_hotkey(self):
         keyboard.add_hotkey("x", self.toggle_clicking)
 
     def _get_interval(self):
         try:
-            h = int(self.hours_var.get() or 0)
-            m = int(self.mins_var.get() or 0)
-            s = int(self.secs_var.get() or 0)
-            ms = int(self.ms_var.get() or 100)
+            h  = int(self.hours_var.get() or 0)
+            m  = int(self.mins_var.get()  or 0)
+            s  = int(self.secs_var.get()  or 0)
+            ms = int(self.ms_var.get()    or 0)
             return h * 3600 + m * 60 + s + ms / 1000.0
         except ValueError:
-            return 0.1
-
-    def _get_button(self):
-        mapping = {"Gauche": "left", "Droit": "right", "Milieu": "middle"}
-        return mapping.get(self.mouse_btn_var.get(), "left")
+            return 0
 
     def _get_max_clicks(self):
         val = self.repeat_var.get()
@@ -212,38 +240,50 @@ class AutoClicker:
         self.root.after(0, self._update_ui_stopped)
 
     def _click_loop(self):
-        interval = self._get_interval()
-        button = self._get_button()
+        interval   = self._get_interval()
+        btn_name   = self.mouse_btn_var.get()
         click_type = self.click_type_var.get()
         max_clicks = self._get_max_clicks()
-        double = click_type == "Double"
+        double     = click_type == "Double"
+        down_flag, up_flag = CLICK_MAP.get(btn_name, CLICK_MAP["Gauche"])
+
+        # Mise a jour UI toutes les 100 clics pour ne pas ralentir la boucle
+        update_every = 100
+        last_ui = 0
 
         while self.clicking:
+            _send_click(down_flag, up_flag)
             if double:
-                pyautogui.doubleClick(button=button)
-            else:
-                pyautogui.click(button=button)
+                _send_click(down_flag, up_flag)
+
             self.click_count += 1
-            self.root.after(0, self._update_count)
+
+            if self.click_count - last_ui >= update_every:
+                last_ui = self.click_count
+                self.root.after(0, self._update_count)
+
             if max_clicks and self.click_count >= max_clicks:
                 self.root.after(0, self.stop_clicking)
                 break
-            time.sleep(interval)
+
+            # Si intervalle = 0 : aucun sleep => vitesse maximale
+            if interval > 0:
+                time.sleep(interval)
 
     def _update_ui_running(self):
-        self.canvas.itemconfig(self.status_dot, fill="#7C6FF0")
+        self.canvas.itemconfig(self.status_dot,  fill="#7C6FF0")
         self.canvas.itemconfig(self.status_text, text="EN COURS", fill="#7C6FF0")
         self.start_btn.config(text="■  ARRÊTER", bg="#3A2A6A", activebackground="#4A3A7A")
 
     def _update_ui_stopped(self):
-        self.canvas.itemconfig(self.status_dot, fill="#2A4A2A")
+        self.root.after(0, self._update_count)
+        self.canvas.itemconfig(self.status_dot,  fill="#2A4A2A")
         self.canvas.itemconfig(self.status_text, text="ARRÊTÉ", fill="#3A8A3A")
         self.start_btn.config(text="▶  DÉMARRER", bg="#7C6FF0", activebackground="#9B90F5")
 
     def _update_count(self):
-        self.canvas.itemconfig(self.count_text,
-                                text=f"{self.click_count:,} clics".replace(",", " "),
-                                fill="#4A4A6A")
+        txt = f"{self.click_count:,} clics".replace(",", " ")
+        self.canvas.itemconfig(self.count_text, text=txt, fill="#4A4A6A")
 
 if __name__ == "__main__":
     root = tk.Tk()
