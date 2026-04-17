@@ -49,7 +49,7 @@ class AutoClicker:
         canvas.create_text(210, 38, text="AUTO", font=("Segoe UI", 28, "bold"),
                            fill="#7C6FF0", anchor="center")
         canvas.create_text(210, 64, text="CLICKER", font=("Segoe UI", 10, "bold"),
-                           fill="#4A4A5A", anchor="center", spacing=8)
+                           fill="#4A4A5A", anchor="center")
         canvas.create_text(210, 82, text="▪  ▪  ▪", font=("Segoe UI", 8),
                            fill="#2A2A3A", anchor="center")
 
